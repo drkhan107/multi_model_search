@@ -10,7 +10,8 @@ from PIL import Image
 import futils
 
 from assistant import Assistant
-from blip2 import generate_embeddings
+# from blip2 import generate_embeddings
+from clip import generate_embeddings
 from classifier import Classifier
 from langchain_community.vectorstores import FAISS # Import FAISS
 
@@ -21,7 +22,8 @@ load_dotenv()
 llms=futils.get_llms()
 
 # Define the path where the FAISS index will be saved
-FAISS_INDEX_PATH = "faiss_image_index"
+FAISS_INDEX_PATH = "faiss_screenshots_index"
+FAISS_INDEX_PATH = "faiss_image_clip_index"
 hf_embeddings = HuggingFaceEmbeddings(model_name="nomic-ai/modernbert-embed-base")
 try:
     faiss_db=None
@@ -53,6 +55,8 @@ model = llms[1] #ChatVertexAI(model_name=os.getenv("MODEL_NAME"), project=os.get
 classifier = Classifier(model)
 assistant = Assistant(model)
 
+classify=True
+
 st.title("Welcome to WaaW's Fashion Assistant")
 
 user_input = st.text_input("Hi, I an WaaW Fashion Assistant. How can I help you today?")
@@ -62,8 +66,9 @@ uploaded_file = st.file_uploader("Upload an image", type=["jpg", "jpeg", "png"])
 if st.button("Submit"):
 
     # understand what the user is asking for
-    classification = classifier.classify(user_input)
-    print("Classification    ",classification)
+    if classify:
+        classification = classifier.classify(user_input)
+        print("Classification    ",classification)
 
     if uploaded_file:
 
@@ -87,12 +92,12 @@ if st.button("Submit"):
     #         retrieved_items.append({"bytesBase64Encoded": futils.encode_image_to_base64(clothe.page_content)})
     #         retrieved_items_path.append(clothe.page_content)
 
-    if len(classification.category)>0:
+    if classify and len(classification.category)>0:
         filter_set={"category": {"$in": classification.category}}
     else:
         filter_set={}
-    if classification.number_of_items>0: num=  classification.number_of_items 
-    else: num=5
+    if classify and classification.number_of_items>0: num=  classification.number_of_items 
+    else: num=11
 
     clothes = faiss_db.similarity_search_by_vector(
         embedding, k=num, filter=filter_set
@@ -104,11 +109,60 @@ if st.button("Submit"):
     # get assistant's recommendation
     assistant_output = assistant.get_advice(user_input, retrieved_items, len(retrieved_items))
     st.write(assistant_output.answer)
-    if len(retrieved_items) >0:
-        cols = st.columns(len(retrieved_items))
-        for col, retrieved_item in zip(cols, retrieved_items_path):
-            print(retrieved_item)
-            col.image(retrieved_item)
+    
+
+
+
+    if 'selected_image_path' not in st.session_state:
+        st.session_state.selected_image_path = None
+
+    # --- Display Image Grid ---
+    if len(retrieved_items_path) > 0:
+        items_per_row = 3
+        num_items = len(retrieved_items_path)
+
+        st.write("Click the 'View' button below an image to see it full size.") # User guidance
+
+        # Iterate through the list in steps of items_per_row (3)
+        for i in range(0, num_items, items_per_row):
+            # Create a new row with items_per_row columns for each chunk
+            cols = st.columns(items_per_row)
+
+            # Iterate through the columns in the current row
+            # This handles the case where the last row might have fewer than 3 images
+            for j in range(items_per_row):
+                # Calculate the index of the item in the original list
+                item_index = i + j
+
+                # Check if the item_index is within the bounds of the list
+                if item_index < num_items:
+                    image_path = retrieved_items_path[item_index]
+
+                    # Display the thumbnail in the current column
+                    # Added a caption for context
+                    cols[j].image(image_path, caption=f"Image {item_index+1}")
+
+                    # Add a button below the image
+                    # Use a unique key for each button in the loop
+                    # When clicked, update session state
+                    if cols[j].button(f"View", key=f"view_button_{item_index}"):
+                        st.session_state.selected_image_path = image_path
+                        # st.rerun() # Optional: Rerun immediately to show full image.
+                                # Often not needed if the full image display is checked *after* this loop.
+
+    # --- Display Full Size Image if selected ---
+    if st.session_state.selected_image_path is not None:
+        st.subheader("Full Size Image")
+
+        # Add a button to close the full view
+        if st.button("Close Full View"):
+            st.session_state.selected_image_path = None
+            # st.rerun() # Rerun to hide the full image
+
+        # Display the selected full-size image
+        # use_column_width=True makes it fill the column width, adjust as needed
+        st.image(st.session_state.selected_image_path, use_column_width=True)
+
 
     user_input = st.text_input("")
 
